@@ -10,7 +10,6 @@ This repository contains the final project for the **Applied Linear Models** cou
 ##  Academic Context
 * **Author:** Giorgia Cappellato
 * **Course:** Applied Linear Models
-* **Academic Year:** 2024/2025
 * **Institution:** Università Cattolica del Sacro Cuore
 
 ##  Dataset
