@@ -1,4 +1,4 @@
-#  Housing Price Modeling: A Statistical Approach
+#  Applied Linear Model's project: Housing Price Modeling
 
 ![Language](https://img.shields.io/badge/Language-R-blue)
 ![Course](https://img.shields.io/badge/Course-Applied_Linear_Models-brightgreen)
