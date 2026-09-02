@@ -38,7 +38,7 @@ The project follows a rigorous statistical workflow to ensure the reliability of
 * **Methods:** Multiple Linear Regression, ANOVA, Cross-Validation, Statistical Diagnostics.
 * **Outputs:** RMarkdown for reproducible research (`.Rmd`).
 
-## 🚀 How to Run the Project
+##  How to Run the Project
 
 1. Clone the repository:
    ```bash
