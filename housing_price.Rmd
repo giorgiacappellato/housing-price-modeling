@@ -1,0 +1,433 @@
+---
+title: "Housing Price Modeling"
+author: "Giorgia Cappellato"
+output: pdf_document
+header-includes:
+  - \usepackage{float}
+  - \usepackage{caption}
+  - \captionsetup{skip=2pt}
+  - \setlength{\textfloatsep}{5pt}
+  - \setlength{\intextsep}{5pt}
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Data collecting
+
+This study analyzes a dataset about New York housing prices from 2023. The dataset (downloaded from Kaggle) includes 545 observations across 13 variables, each representing key characteristics of residential properties.
+By applying linear regression techniques, this analysis evaluates the relationship between property attributes and market prices, providing insights into the elements that influence housing values.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+library(gridExtra)
+library(leaps)
+library(car)
+library(lmtest)
+library(scales)
+library(effects)
+options(scipen = 10)
+
+data = read.csv("Housing_Price_Data.csv")
+
+data$mainroad <- as.factor(data$mainroad)
+data$guestroom <- as.factor(data$guestroom)
+data$basement <- as.factor(data$basement)
+data$hotwaterheating <- as.factor(data$hotwaterheating)
+data$airconditioning <- as.factor(data$airconditioning)
+data$prefarea <- as.factor(data$prefarea)
+
+data$furnishingstatus = factor(data$furnishingstatus, 
+                                levels = c("semi-furnished", "furnished",
+                                           "unfurnished"))
+
+str(head(data))
+```
+
+## 2. Goals
+
+The objective of the analysis is to identify and evaluate the impact of significant predictors influencing house prices in New York, while determining the most effective regression model for price estimation and generating accurate market predictions.
+These insights could be valuable for investors, buyers, and sellers, contributing to better decision-making in real estate pricing and investment strategies.
+The focus will be to establish the relationship between the *Price* variable and the covariates in the model.
+
+## 3. Graphical representation of the variables
+
+In predicting house prices using linear regression, transforming the response variable (*Price*) is necessary to meet the assumptions of linear models and improve model performance. House prices are usually right-skewed due to a few very expensive properties pulling the average upward, which violates the assumption that residuals are normally distributed and that the relationship between predictors and the response is linear. A log transformation of price helps normalize this skew, making the model more valid. Additionally, linear regression assumes constant variance of errors (homoscedasticity), but when prices vary widely, the variance of the residuals often increases with the price level. Applying a log transformation compresses high values and stabilizes variance across observations. Finally, transforming the price variable can lead to better model fit, improved R² values, more meaningful coefficients, and fewer violations of model assumptions, enhancing both the accuracy and interpretability of the regression model.
+
+```{r, echo=FALSE, fig.cap="Distribution of the Response Variable", fig.align="center", fig.pos="H", fig.width=8, fig.height=3, out.width="95%"}
+par(mfrow=c(1,3), mar=c(4,4,2,1))
+hist(data$price, main = "Histogram of Price", xlab = "y", ylab = "Frequency", breaks = 10, col = "lightblue")
+abline(v = mean(data$price), col = "black", lwd = 2)
+
+data$logy <- log(data$price)
+hist(data$logy, main = "Histogram of logPrice", xlab = "log(y)", ylab = "Frequency", breaks = 10, col = "lightblue")
+abline(v = mean(data$logy), col = "black", lwd = 2)
+
+boxplot(data$logy, main = "Boxplot of logPrice", ylab = "Values", col = "lightblue", border = "black")
+```
+
+After converting the categorical variables into factors, I created a graphical representation of the qualitative variables (Figure 2). We can easily observe that the presence of all of these features slightly influences the mean price.
+For example, in the last boxplot, we see that the variable *Furnishingstatus* impacts house prices, as furnished houses tend to have higher prices compared to semi-furnished or unfurnished ones.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot of the Categorical Variables", fig.align="center", fig.pos="H", fig.width=8, fig.height=6.9, out.width="95%"}
+cat_vars = c("mainroad", "guestroom", "basement", "hotwaterheating", 
+              "airconditioning", "prefarea", "furnishingstatus")
+
+plot_list = lapply(cat_vars, function(var) {
+  ggplot(data, aes_string(x = var, y = "data$logy")) +
+    geom_boxplot(fill = "skyblue", color = "black", outlier.colour = "red") +
+    labs(x = var, y = "logPrice") +
+    theme_minimal()
+})
+
+grid.arrange(grobs = plot_list, ncol = 2)
+```
+
+From the scatterplot matrix we can see that the continuous variables *logPrice* and *Area* are positively correlated: this suggests that larger properties tend to have higher prices.
+The categorical variables *Bedrooms*, *Bathrooms*, *Stories* and *Parking* display discrete values.
+Since they take a limited number of values, their scatterplots appear as vertical groupings of points rather than continuous spreads.
+
+```{r, echo=FALSE, fig.cap="Scatterplot matrix", fig.align="center", fig.pos="H", fig.width=8, fig.height=5, out.width="90%"}
+plot(data[,c("logy", "area", "bedrooms", "bathrooms", "stories", "parking")], pch = 19, cex = 0.7)
+```
+
+## 4. Explanation of the response variable
+
+Assuming a linear regression model, we perform a variable selection procedure with the aim to understand which variables are significant and which not for predicting the outcome of the response.
+
+```{r, echo=FALSE}
+ols = regsubsets(logy ~ area + bedrooms + bathrooms + stories + mainroad + guestroom +
+                 basement + hotwaterheating + airconditioning + parking + prefarea +
+                   furnishingstatus, data = data, nvmax = 20)
+sum = summary(ols)
+sum
+```
+
+The results show that variables such as *Area* and *Bathrooms* consistently appeared in the best-performing models across different subset sizes, indicating their strong predictive power. Other variables like *Air conditioning* and *Stories* also entered the model in mid-sized subsets and remained included in larger models. Less influential predictors, such as *Bedrooms*, were only selected in the largest models, suggesting a weaker contribution. These findings help guide the selection of an efficient model by balancing predictive accuracy and complexity, to be further evaluated using model selection criteria such as AIC, BIC or adjusted R².
+
+
+## 5. Best Overall Model
+
+To find the best overall model, we use the Akaike Information Criterion, the Bayesian Information Criterion, the Mallows' Cp and Adjusted R-squared.
+By using the first three methods, the values decrease as we add predictors in the model, reaching the minimum at 12 with the AIC and the Mallows' Cp, at 11 with the BIC (as indicated by the dashed vertical line).
+This means that a model with such a number of predictors might be the best based on these criteria.
+On the contrary, the Adjusted R-squared measures how well the model fits the data by increasing as we add significant predictors.
+
+```{r, fig.cap="Best Model Selection's criteria", fig.align="center", fig.pos="H", fig.width=6, fig.height=2}
+par(pty = "s", mfrow = c(1,4), mar = c(1,1,2,2))
+
+#AIC
+p = 13
+n = nrow(data)
+AIC = matrix(NA, p, 1)
+for(j in 1:p) {
+  AIC[j] = sum$bic[j] - (j+2)*log(n) + 2*(j+1) }
+plot(AIC, type = "b", pch = 19, xlab = "Number of predictors", ylab = "", main = "AIC")
+abline(v = which.min(AIC), col = 2, lty = 2)
+
+#BIC
+plot(sum$bic, type = "b", pch = 19, xlab = "Number of predictors", ylab ="", main ="BIC")
+abline(v = which.min(sum$bic), col = 2, lty = 2)
+
+#Mallows' Cp
+plot(sum$cp, type = "b", pch = 19, xlab = "Number of predictors", ylab = "",
+     main = "Mallows' Cp")
+abline(v = which.min(sum$cp), col = 2, lty = 2)
+
+#Adjusted R-squared
+plot(sum$adjr2, type = "b", pch = 19, xlab = "Number of predictors",
+     ylab = "", main = "Adjusted R^2")
+abline(v = which.max(sum$adjr2), col = 2, lty = 2)
+```
+
+\newpage
+
+```{r, fig.cap="Cross-Validation Error", fig.align="center", fig.pos="H", fig.width=10, fig.height=5, out.width="90%"}
+p = 13
+k = nrow(data)
+set.seed(12)
+folds = sample(1:k, nrow(data), replace = FALSE)
+cv.errors = matrix(NA, k, p, dimnames = list(NULL, paste(1:p)))
+for(j in 1:k) {
+  best.fit = regsubsets(logy ~. -price, nvmax = 13, data = data[folds != j,])
+  max_models = nrow(summary(best.fit)$which)
+  
+  for (i in 1:p) {
+    mat = model.matrix(as.formula(best.fit$call[[2]]), data[folds==j,])
+    coefi = coef(best.fit, id = i) 
+    xvars = names(coefi)
+    pred = mat[, xvars]%*%coefi
+    cv.errors[j,i] = mean((data$logy[folds == j] - pred)^2)
+  }
+}
+cv.mean = numeric(max_models)
+for (i in 1:max_models){
+  cv.mean[i] = mean(cv.errors[,i])
+}
+
+plot(cv.mean, type = "b", pch = 19, xlab= "Predictors", ylab = "Cv error")
+abline(v=which.min(cv.mean), col = 2, lty = 2)
+```
+
+The Cross-Validation Error plot (Figure 5) offers an alternative method for selecting the most relevant predictors. In each fold of cross-validation, variable selection is performed on the training data (k-1 folds), and the resulting model is evaluated on the held-out fold to compute test error.
+The results indicate that after including 10 predictors, the CV error stabilizes and further additions yield minimal improvement-evidenced by the flattening of the curve. While it may seem intuitive that more variables improve model accuracy, including irrelevant or weakly informative predictors can introduce noise and reduce generalizability. Selecting only the most meaningful variables helps balance predictive performance with interpretability. Therefore, the model with 10 covariates is preferred for its optimal trade-off between simplicity and accuracy.
+
+
+## 6. Check Collinearity
+
+This is the summary of the best model selected, excluding the non-significant variables.
+
+```{r, echo=FALSE}
+options(scipen = 5)
+ols2 = lm(logy ~ area + bathrooms + stories + mainroad + basement + airconditioning
+          + parking + prefarea + furnishingstatus, data = data)
+
+summary(ols2)
+```
+
+From the very low overall p-value, we can conclude that the model is statistically significant.
+Nevertheless, the variable *furnishingstatusfurnished* shows a high p-value (0.425) and is not statistically significant at the 5% level. It is retained in the model because it belongs to a categorical variable with three levels, and such factors are represented using dummy variables relative to a reference category (in this case, *semi-furnished*). Omitting one dummy while keeping the others would distort the interpretation of the entire factor and compromise the model’s validity. Therefore, to preserve correct encoding and enable meaningful comparisons among all furnishing statuses, all related dummy variables are retained, regardless of individual significance.
+
+The R-squared value of 0.6782 indicates a moderately strong model fit, meaning the predictors explain about 67.82% of the variation in the response variable.
+
+
+By calculating the Variance Inflation Factor (VIF), we check the absence of multicollinearity for the independent variables: $$\text{VIF}(\hat{\beta}_j) = \frac{1}{1 - R^2_{X_j \mid X - j}}$$
+
+The Generalized Variance Inflation Factor (GVIF) extends the standard VIF to handle predictors with more than one degree of freedom.
+To ensure there is no problematic multicollinearity in the model, the GVIF should ideally be below 10.
+
+```{r, echo=FALSE}
+vif(ols2)
+```
+
+We obtain only low values (all around 1), confirming that there are no multicollinearity issues.
+Hence, we can keep all the selected variables in the model.
+
+
+## 7. Diagnostic
+
+Firstly, we check if the assumptions of linearity and homoscedasticity are verified by examining the residuals of the model.
+
+```{r, echo=FALSE, fig.cap="Residuals vs Fitted Values", fig.align="center", fig.pos="H", fig.width=10, fig.height=6, out.width="90%"}
+plot(fitted(ols2), residuals(ols2), xlab = "Fitted Values", ylab = "Residuals",
+     pch = 16)
+abline(h = 0, col = 2, lty = 2)
+```
+
+The plot displays the residuals plotted against the fitted values from the linear model. The residuals appear to be randomly scattered around the horizontal line at zero, which suggests that the assumption of linearity is reasonably satisfied: there is no clear pattern or systematic structure indicating model misfit.
+There is, however, a slight funnel shape, where the spread of residuals seems to increase with larger fitted values. This points to mild heteroscedasticity, a violation of the constant variance assumption (homoscedasticity). While not severe, it’s something to be aware of, especially when interpreting coefficient standard errors.
+
+Overall, the graph suggests that the linear model is a reasonable fit for the log-transformed housing price data, with no strong violations of assumptions. The model diagnostics at this stage indicate acceptable performance, and we can proceed to assess the normality of residuals next.
+
+
+```{r, echo=FALSE, fig.cap="Normality assumption plots", fig.align="center", fig.pos="H"}
+par(mfrow = c(1,3))
+boxplot(residuals(ols2), col = 2, main = "Box Plot")
+qqnorm(residuals(ols2), pch = 16, ylab = "Residuals")
+qqline(residuals(ols2), col= 2, lwd = 2)
+hist(residuals(ols2), col = 2, xlab = "Residuals", main = "Histogram")
+```
+
+
+Figure 7 presents three visual diagnostics for assessing the normality of residuals.
+The boxplot reveals few points that could be considered outliers, although none appear extreme.
+
+The Q-Q plot shows that most residuals align closely with the theoretical normal line, especially in the center of the distribution. However, minor deviations are noticeable in the tails, simulating a slightly skewed distribution.
+
+The histogram appears approximately bell-shaped, reinforcing the idea that the residuals follow a normal distribution.
+
+```{r}
+shapiro.test(residuals(ols2))
+```
+
+The Shapiro-Wilk test (a formal test for normality) yields a p-value of 0.1058. Since this is greater than the typical significance level of 0.05, we fail to reject the null hypothesis of normality. This statistical evidence supports what is seen in the plots: while the residuals are not perfectly normal, they are sufficiently close for the assumptions of linear regression to hold.
+
+Overall, both graphical and statistical diagnostics suggest that the normality assumption is reasonably satisfied, and no transformation of the residuals appears necessary at this stage.
+
+
+\newpage
+
+## 8. Model improving
+
+Finally, we try to identify unusual observations like outliers, high leverage points and influential points.
+
+```{r, echo=FALSE, fig.cap="Unusual observations", fig.align="center", fig.pos="H", out.width="95%"}
+par(mfrow = c(1,3))
+r_standard = rstandard(ols2)
+outliers = abs(r_standard) > 3
+x_outliers = which(outliers)
+y_outliers = abs(r_standard)[outliers]
+plot(abs(r_standard), pch = 16, ylim = c(0,6), main = "a) Outliers",
+     ylab = "Studentized Residuals")
+abline(h = 3, lty = 2, col = "red", lwd = 2)
+points(x_outliers, y_outliers, pch = 16, col = "blue")
+text(x_outliers, y_outliers, labels = x_outliers, cex = 0.8, pos = 3,
+     col="blue")
+n = 545
+r = length(coef(ols2))
+h_values = hatvalues(ols2)
+plot(h_values, pch = 16, ylab = "Leverages", main = "b) High Leverage Points",
+     ylim = c(0, 0.12))
+threshold = 2 *(r + 1)/n
+abline(h = threshold, col ="red", lty = 2, lwd = 2)
+above_threshold_indexes = which(h_values > threshold)
+text(above_threshold_indexes, h_values[above_threshold_indexes], labels = above_threshold_indexes, cex = 0.7, pos = 3, col = "blue")
+points(above_threshold_indexes, h_values[above_threshold_indexes], pch = 16,
+       col = "blue")
+cook = cooks.distance(ols2)
+plot(cook, pch = 16, ylim = c(0, 1.10), ylab = "Cook's distance",
+     main = "c) Influential points")
+abline(h = 0.5, col = "blue", lty = 2, lwd = 2)
+abline(h = 1, col = "red", lty = 2, lwd = 2)
+```
+
+An outlier is a data point whose observed value is far from the value predicted by the regression model, resulting in a large residual. Outliers may indicate unusual behavior in the response variable and can have a strong influence on model estimates. However, not all outliers are influential, and some may be due to data entry errors, measurement noise, or real but rare phenomena. To systematically identify outliers, we rely on studentized residuals, which adjust raw residuals by accounting for the observation's leverage and the model's variance. The studentized residual for the i-th observation is given by: $r_i = \frac{e_i}{\hat{\sigma} \sqrt{1 - h_{ii}}}$.
+A common rule of thumb is that observations with $|r_i| > 3$ may be considered potential outliers. From Figure 8 we see very few of them. Before removing them, it is necessary a deeper analysis, as they could hold crucial information useful to the model.
+
+A high leverage point is an observation with an extreme or unusual value for one or more predictor variables, giving it the potential to influence the fitted regression model. In Figure 8b, we use a common rule of thumb to identify high leverage observations, those with a leverage value greater than 2 or 3 times the average leverage, calculated as $\frac{2(p + 1)}{n}$ , where *p* is the number of predictors and *n* is the number of observations.
+The plot reveals only a few data points that exceed the threshold, indicating that most observations lie within a normal range of leverage. While high leverage points do not necessarily distort the model, they can if paired with large residuals.
+
+The Cook’s distance plot shows that none of the observations exceed the typical thresholds of 0.5 or 1, suggesting that no single data point has an undue influence on the regression results. Since Cook’s distance accounts for both residual size and leverage, it is a reliable measure for detecting influential points, those capable of significantly altering model estimates if omitted. The absence of such points reinforces the stability and reliability of the fitted model.
+
+
+\newpage
+
+## 9. Interpretation of the coefficients
+
+```{r, echo=FALSE}
+options(scipen = 5)
+summary(ols2)$coefficients
+```
+
+*Price* = 14.42421: the intercept ($\beta_0$) represents the estimated value of the logarithm of the house price when all the independent variables are set to zero.
+The expected price (when all the other regressors are set to zero) is the exponential of the Beta coefficient, so in this case $e^{14.42421}$ = 1.838.039 dollars.
+However, this is a theoretical value, since this is not a realistic scenario.
+
+*Area* = 0.00005: this coefficient represents the percentage change in the response variable for a square unit increase in the area of the house, keeping all the other variables constant.
+Since $\beta_1$ is a positive value, this means that larger houses are generally more expensive.
+So, if the area increases by 100 units, the price increases by approximately 0.5%.
+
+*Bathrooms* = 0.17923: the coefficient of this discrete variable ($\beta_2$) indicates that a unitary increase in bathrooms implies a multiplicative increase of $e^{0.17923}$=1.1963 in the expected price value.
+Equally, adding one more bathroom increases the expected house price by approximately 19.63%.
+
+*Basementyes* = 0.11638: the coefficient of this dummy variable ($\beta_4$) suggests that houses with basement have an expected price that is higher by a factor of $e^{0.11638}$=1.1234, compared to houses without basement. This implies an approximate 12.34% increase in expected price for houses with a basement, compared to those without.
+
+All the remaining coefficients follow the same interpretation.
+
+
+Effect plots are valuable for assessing the uncertainties linked to the estimated coefficients.
+The blue line depicts the estimated effect of the predictor variable, while the shaded blue area represents the confidence interval.
+As shown above, *Area* has the narrowest confidence interval, whereas *Parking* exhibits the greatest uncertainty with the widest confidence interval.
+
+```{r, echo=FALSE, fig.cap="Predictor effect plot", fig.align="center", fig.pos="H", fig.width=5,5, fig.height=3, out.width="70%"}
+par(mfrow = c(1, 2))
+pred.effect = predictorEffect("area", ols2)
+plot(pred.effect)
+pred.effect2 = predictorEffect("parking", ols2)
+plot(pred.effect2)
+```
+
+
+## 10. Coefficient significance testing
+
+Based on the output of the linear regression model, we can perform a two-sided t-test for each coefficient to test the null hypothesis that each coefficient is equal to zero, against the alternative hypothesis.
+$$\begin{cases}
+H_0: \beta_j = 0 \\
+H_1: \beta_j \neq 0
+\end{cases}$$
+
+The results show that all coefficients have p-values below 0.05 (except for one level of the final categorical variable, which is retained for reasons previously discussed). This indicates that we can reject the null hypothesis and conclude that the predictors are significantly associated with the response variable at the 5% significance level.
+
+
+## 11. F-Test
+
+We want to test whether a simpler model, containing only the most significant predictors, performs as well as the full model. To do this, we will use the ANOVA test to determine whether the reduced model is statistically equivalent to the full model. If the test supports this, we can justify dropping the additional variables.
+
+$$
+\left\{
+\begin{aligned}
+H_0: \quad Y &= \beta_0 + \beta_1 X_{\text{area}} + \beta_2 X_{\text{bathrooms}} + \beta_3 X_{\text{stories}} \\
+H_1: \quad Y &= \beta_0 + \beta_1 X_{\text{area}} + \beta_2 X_{\text{bathrooms}} + \beta_3 X_{\text{stories}} + \beta_4 X_{\text{mainroad}} + \beta_5 X_{\text{basement}} \\
+&\quad + \beta_6 X_{\text{airconditioning}} + \beta_7 X_{\text{parking}} + \beta_8 X_{\text{prefarea}} + \beta_9 X_{\text{furnishingstatus}}
+\end{aligned}
+\right.
+$$
+
+```{r, echo=FALSE}
+mod2 = ols2
+mod3 = lm(logy ~ area + bathrooms + stories, data = data)
+anova(mod3, mod2)
+```
+
+The full model is better because it has lower Residual Sum of Squares (RSS).
+Furthermore, since the p-value is extremely small (\< 2.2e-16), we reject the null hypothesis, suggesting that the additional predictors improve the model's explanatory power.
+
+## 12. Goodness of fit
+
+We are going to use the Adjusted R-squared to measure the goodness of fit.
+
+```{r}
+summary(ols2)$adj.r.squared
+```
+
+The value we obtained indicates that the covariates explain 67.82% of the variance in the response variable, while 32.18% of the variation remains unexplained, possibly due to missing predictors or random variation.
+In conclusion, this value suggests a moderately strong model.
+
+## 13. Prediction
+
+We add a new observation with *Area*=7000, *Bathrooms*=2, *Stories*=2, *Mainroad*=yes, *Basement*=yes,
+*Airconditioning*=yes, *Parking*=1, *Prefarea*=no, *Furnishingstatus*=furnished.
+
+```{r, echo=FALSE}
+new_data = data.frame(area = 7000, bathrooms = 2, stories = 2, mainroad = "yes",
+                      basement ="yes", airconditioning = "yes", parking = 1,
+                      prefarea = "no", furnishingstatus = "furnished")
+pred = predict(ols2, newdata = new_data, interval = "prediction", level = 0.95)
+pred
+```
+
+By adding the new record, the model predicts that the outcome is approximately 15.77 with a 95% confidence interval, this means that the fitted price of the house is equal to $e^{15.77}$ = 7.060.313 dollars.
+So the predicted value of the dependent variable augments with respect to the value at Point 9.
+
+\newpage
+
+## 14. Simulation
+
+We aim to generate a simulation of new responses using the estimated coefficients as the true parameters, adding random noise based on the model's error distribution.
+
+```{r, fig.align="center", fig.pos="H", fig.width=10, fig.height=6, out.width="95%"}
+set.seed(12)
+n = nrow(data)
+
+beta = coefficients(ols2)
+X = model.matrix(ols2)
+y_hat = X %*% beta + rnorm(n, 0, sigma(ols2))
+y_obs = ols2$model[, 1]
+plot(y_obs, y_hat, xlab = "Observed Response", ylab = "Simulated Response",
+     pch=16, col="blue")
+abline(a=0, b=1, col="red", lwd=2)
+```
+
+The red line represents the ideal relationship between the simulated response and the observed response. As we can see from the plot, the points are generally clustered around this line, indicating that the model's simulations reproduce the observed data reasonably well. The model is both well-calibrated and capable of generating realistic predictions, further reinforcing confidence in the reliability of the fitted model.
+
+## Conclusion
+
+This analysis successfully identified the most influential variables affecting housing prices in New York and built a regression model capable of generating accurate price predictions.
+Through careful variable selection, diagnostics, and validation, the final model includes ten significant predictors and meets the key assumptions of linear regression after a log transformation of the response variable.
+The model explains approximately 67.8% of the price variation and it demonstrates strong performance both on real and simulated data.
+These results provide clear, data-driven insights into how different property features impact market value.
+
+
+## References
+
+* https://www.kaggle.com
+* Sanford Weisberg, *Applied Linear Regression (Fourth Edition)*
+* Gareth James, Daniela Witten, Trevor Hastie, Robert Tibshirani, *An Introduction to Statistical Learning with Applications in R* (2021)
+
